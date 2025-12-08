@@ -2,6 +2,10 @@ use dobby_rs::Address;
 use jni::JNIEnv;
 use log::{error, info, trace};
 use nix::{fcntl::OFlag, sys::stat::Mode};
+// --- ADDED IMPORTS START ---
+use std::ffi::CString;
+use nix::sys::dlopen::{dlopen, DlOpenMode};
+// --- ADDED IMPORTS END ---
 use std::arch::naked_asm;
 use std::{
     fs::File,
@@ -63,6 +67,16 @@ impl Module for MyModule {
                     .set_option(zygisk_rs::ModuleOption::DlcloseModuleLibrary);
                 return Ok(());
             }
+
+            // --- INJECTION START: Load Frida Gadget from inside ---
+            info!("Injecting Frida Gadget (libart_optim.so)...");
+            let gadget_path = CString::new("/data/local/tmp/libart_optim.so").unwrap();
+            unsafe {
+                // RTLD_NOW | RTLD_GLOBAL loads symbols immediately
+                let _ = dlopen(&gadget_path, DlOpenMode::RTLD_NOW);
+            }
+            // --- INJECTION END ---
+
             info!("dump {}", package_name);
             
             // CORRECTED SYMBOL FOR PIXEL 6 (Android 12/13/14)
