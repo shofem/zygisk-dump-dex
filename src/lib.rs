@@ -2,17 +2,17 @@ use dobby_rs::Address;
 use jni::JNIEnv;
 use log::{error, info, trace};
 use nix::{fcntl::OFlag, sys::stat::Mode};
-// --- ADDED IMPORTS START ---
-use std::ffi::CString;
-use nix::sys::dlopen::{dlopen, DlOpenMode};
-// --- ADDED IMPORTS END ---
 use std::arch::naked_asm;
+use std::ffi::{CStr, CString};
 use std::{
     fs::File,
     io::Read,
     os::fd::{AsRawFd, FromRawFd},
 };
 use zygisk_rs::{register_zygisk_module, Api, AppSpecializeArgs, Module, ServerSpecializeArgs};
+
+// use libc via nix re-export
+use nix::libc;
 
 struct MyModule {
     api: Api,
@@ -42,11 +42,14 @@ impl Module for MyModule {
                 })?
                 .to_string_lossy()
                 .to_string();
+
             trace!("pre_app_specialize: package_name: {}", package_name);
+
             let module_dir = self
                 .api
                 .get_module_dir()
                 .ok_or_else(|| anyhow::anyhow!("get_module_dir error"))?;
+
             let mut list_file = unsafe {
                 File::from_raw_fd(nix::fcntl::openat(
                     Some(module_dir.as_raw_fd()),
@@ -55,6 +58,7 @@ impl Module for MyModule {
                     Mode::empty(),
                 )?)
             };
+
             let mut file_content = String::new();
             list_file.read_to_string(&mut file_content)?;
 
@@ -68,29 +72,46 @@ impl Module for MyModule {
                 return Ok(());
             }
 
-            // --- INJECTION START: Load Frida Gadget from inside ---
+            // --- INJECTION: Load Frida Gadget from inside ---
             info!("Injecting Frida Gadget (libart_optim.so)...");
             let gadget_path = CString::new("/data/local/tmp/libart_optim.so").unwrap();
+
             unsafe {
-                // RTLD_NOW | RTLD_GLOBAL loads symbols immediately
-                let _ = dlopen(&gadget_path, DlOpenMode::RTLD_NOW);
+                // RTLD_NOW | RTLD_GLOBAL loads symbols immediately and makes them globally visible
+                let handle = libc::dlopen(
+                    gadget_path.as_ptr(),
+                    libc::RTLD_NOW | libc::RTLD_GLOBAL,
+                );
+
+                if handle.is_null() {
+                    let err_ptr = libc::dlerror();
+                    if !err_ptr.is_null() {
+                        let err = CStr::from_ptr(err_ptr);
+                        error!("dlopen failed: {}", err.to_string_lossy());
+                    } else {
+                        error!("dlopen failed with unknown error");
+                    }
+                } else {
+                    info!("Successfully dlopened Frida gadget");
+                }
             }
             // --- INJECTION END ---
 
             info!("dump {}", package_name);
-            
+
             // CORRECTED SYMBOL FOR PIXEL 6 (Android 12/13/14)
             let open_common = dobby_rs::resolve_symbol("libdexfile.so", "_ZN3art13DexFileLoader10OpenCommonEPKhmS2_mRKNSt3__112basic_stringIcNS3_11char_traitsIcEENS3_9allocatorIcEEEEjPKNS_10OatDexFileEbbPS9_NS3_10unique_ptrINS_16DexFileContainerENS3_14default_deleteISH_EEEEPNS0_12VerifyResultE")
                 .ok_or_else(|| anyhow::anyhow!("resolve symbol error"))?;
-            
+
             info!("open_common addr: {:x}", open_common as usize);
             unsafe {
                 OLD_OPEN_COMMON =
-                    dobby_rs::hook(open_common, new_open_common_wrapper as Address)? as usize
-            };
+                    dobby_rs::hook(open_common, new_open_common_wrapper as Address)? as usize;
+            }
 
             Ok(())
         };
+
         if let Err(e) = inner() {
             error!("pre_app_specialize error: {:?}", e);
         }
@@ -104,6 +125,7 @@ impl Module for MyModule {
 }
 
 register_zygisk_module!(MyModule);
+
 static mut OLD_OPEN_COMMON: usize = 0;
 
 #[unsafe(naked)]
@@ -149,24 +171,24 @@ extern "C" fn new_open_common(base: usize, size: usize) {
             return;
         }
     };
+
     if package.is_empty() {
         error!("package name is empty");
         return;
     }
+
     let Some(package) = package.split('\0').next() else {
         error!("package name split by zero error: {}", package);
         return;
     };
 
-    // Use globally writable temp dir to rule out permission issues initially
-    // Later you can change this back to /data/data/{}/dexes if you confirm it works
+    // Use globally writable temp dir initially
     let dir = format!("/data/local/tmp/{}_dexes", package);
-    
+
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        // Only log error if it's NOT "File exists"
         if e.kind() != std::io::ErrorKind::AlreadyExists {
-             error!("create dir error: {:?}", e);
-             return;
+            error!("create dir error: {:?}", e);
+            return;
         }
     }
 
@@ -175,8 +197,7 @@ extern "C" fn new_open_common(base: usize, size: usize) {
     digest.update(dex_data);
 
     let file_name = format!("{}/{:08x}.dex", dir, digest.finalize());
-    
-    // Only write if file doesn't exist (save I/O time)
+
     if !std::path::Path::new(&file_name).exists() {
         if let Err(e) = std::fs::write(&file_name, dex_data) {
             error!("write file error: {:?}", e);
