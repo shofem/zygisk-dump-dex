@@ -64,8 +64,11 @@ impl Module for MyModule {
                 return Ok(());
             }
             info!("dump {}", package_name);
-            let open_common = dobby_rs::resolve_symbol("libdexfile.so", "_ZN3art13DexFileLoader10OpenCommonENSt3__110shared_ptrINS_16DexFileContainerEEEPKhmRKNS1_12basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEENS1_8optionalIjEEPKNS_10OatDexFileEbbPSC_PNS_22DexFileLoaderErrorCodeE")
+            
+            // CORRECTED SYMBOL FOR PIXEL 6 (Android 12/13/14)
+            let open_common = dobby_rs::resolve_symbol("libdexfile.so", "_ZN3art13DexFileLoader10OpenCommonEPKhmS2_mRKNSt3__112basic_stringIcNS3_11char_traitsIcEENS3_9allocatorIcEEEEjPKNS_10OatDexFileEbbPS9_NS3_10unique_ptrINS_16DexFileContainerENS3_14default_deleteISH_EEEEPNS0_12VerifyResultE")
                 .ok_or_else(|| anyhow::anyhow!("resolve symbol error"))?;
+            
             info!("open_common addr: {:x}", open_common as usize);
             unsafe {
                 OLD_OPEN_COMMON =
@@ -118,7 +121,6 @@ pub extern "C" fn new_open_common_wrapper() {
         "#,
         new_open_common = sym new_open_common,
         old_open_common = sym OLD_OPEN_COMMON,
-        // options(noreturn)  // add back if you want, once it compiles cleanly
     );
 }
 
@@ -142,18 +144,30 @@ extern "C" fn new_open_common(base: usize, size: usize) {
         return;
     };
 
-    let dir = format!("/data/data/{}/dexes", package);
+    // Use globally writable temp dir to rule out permission issues initially
+    // Later you can change this back to /data/data/{}/dexes if you confirm it works
+    let dir = format!("/data/local/tmp/{}_dexes", package);
+    
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        error!("create dir error: {:?}", e);
-        return;
+        // Only log error if it's NOT "File exists"
+        if e.kind() != std::io::ErrorKind::AlreadyExists {
+             error!("create dir error: {:?}", e);
+             return;
+        }
     }
 
     let crc = crc::Crc::<u32>::new(&crc::CRC_32_CD_ROM_EDC);
     let mut digest = crc.digest();
     digest.update(dex_data);
 
-    let file_name = format!("/data/data/{}/dexes/{:08x}.dex", package, digest.finalize());
-    if let Err(e) = std::fs::write(file_name, dex_data) {
-        error!("write file error: {:?}", e);
+    let file_name = format!("{}/{:08x}.dex", dir, digest.finalize());
+    
+    // Only write if file doesn't exist (save I/O time)
+    if !std::path::Path::new(&file_name).exists() {
+        if let Err(e) = std::fs::write(&file_name, dex_data) {
+            error!("write file error: {:?}", e);
+        } else {
+            info!("dumped dex to {}", file_name);
+        }
     }
 }
