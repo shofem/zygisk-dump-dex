@@ -1,10 +1,7 @@
-#![feature(naked_functions)]
-
 use dobby_rs::Address;
 use jni::JNIEnv;
 use log::{error, info, trace};
 use nix::{fcntl::OFlag, sys::stat::Mode};
-// use std::arch::asm;
 use std::arch::naked_asm;
 use std::{
     fs::File,
@@ -28,6 +25,7 @@ impl Module for MyModule {
         let env = unsafe { JNIEnv::from_raw(env.cast()).unwrap() };
         Self { api, env }
     }
+
     fn pre_app_specialize(&mut self, args: &mut AppSpecializeArgs) {
         let mut inner = || -> anyhow::Result<()> {
             let package_name = self
@@ -57,7 +55,7 @@ impl Module for MyModule {
             list_file.read_to_string(&mut file_content)?;
 
             let find: bool = file_content
-                .split("\n")
+                .split('\n')
                 .any(|item| item.trim() == package_name);
 
             if !find {
@@ -91,11 +89,10 @@ impl Module for MyModule {
 register_zygisk_module!(MyModule);
 static mut OLD_OPEN_COMMON: usize = 0;
 
-#[naked]
+#[unsafe(naked)]
 pub extern "C" fn new_open_common_wrapper() {
-    unsafe {
-        naked_asm!(
-            r#"
+    naked_asm!(
+        r#"
             sub sp, sp, 0x280
             stp x29, x30, [sp, #0]
             stp x0, x1, [sp, #0x10]
@@ -117,12 +114,12 @@ pub extern "C" fn new_open_common_wrapper() {
             add sp, sp, 0x280
             adrp x16, {old_open_common}
             ldr x16, [x16, #:lo12:{old_open_common}]
-            br x16"#,
-            new_open_common = sym new_open_common,
-            old_open_common = sym OLD_OPEN_COMMON,
-            // options(noreturn)
-        );
-    }
+            br x16
+        "#,
+        new_open_common = sym new_open_common,
+        old_open_common = sym OLD_OPEN_COMMON,
+        // options(noreturn)  // add back if you want, once it compiles cleanly
+    );
 }
 
 extern "C" fn new_open_common(base: usize, size: usize) {
