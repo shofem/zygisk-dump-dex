@@ -1,4 +1,2 @@
 [build]
 target = "aarch64-linux-android"
-[dependencies]
-nix = { version = "0.27", features = ["fs", "dlopen"] }
