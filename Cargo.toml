@@ -5,27 +5,22 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.86"
-bitflags = "^2.6"
+bitflags = "2.6"
 crc = "3.2.1"
 dobby-rs = "0.1.0"
-jni = "^0.21"
-jni-sys = "^0.4"
-log = "^0.4"
-# FIXED LINE BELOW: Added "dlopen" to features
-nix = { version = "^0.29", features = ["fs", "process", "dlopen"] }
+jni = "0.21"
+jni-sys = "0.4"
+log = "0.4"
+nix = { version = "0.29", features = ["fs", "process"] }
 rsprocmaps = "0.3.2"
-zygisk-rs = { git = "https://github.com/Kr328/zygisk-rs", default-features = false, features = ["v4"]}
+zygisk-rs = { git = "https://github.com/Kr328/zygisk-rs", default-features = false, features = ["v4"] }
 
 [lib]
 name = "zygisk"
-# FIXED LINE BELOW: Changed to "cdylib" for correct Android .so generation
 crate-type = ["cdylib"]
 
 [target.'cfg(target_os = "android")'.dependencies]
-android_logger = "^0.14"
-# You can leave the nix line here or remove it, the main dependency above handles it.
-# Keeping it minimal to avoid conflicts:
-nix = "^0.29"
+android_logger = "0.14"
 
 [profile.release]
 strip = "symbols"
