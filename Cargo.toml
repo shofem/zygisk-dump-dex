@@ -1,6 +1,6 @@
 [package]
-name = "mdt_dumper"
-version = "0.2.0"
+name = "mdt_module"
+version = "0.1.0"
 edition = "2021"
 
 [lib]
@@ -8,11 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 zygisk-rs = { git = "https://github.com/PerformanC/zygisk-rs.git" }
-dobby-rs  = { git = "https://github.com/xm798/dobby-rs.git" }
-
 jni = "0.21"
 jni-sys = "0.3"
 log = "0.4"
 android_logger = "0.13"
-anyhow = "1.0"
-crc = "3.0"
