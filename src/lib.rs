@@ -1,17 +1,11 @@
 use dobby_rs::Address;
 use jni::JNIEnv;
 use log::{error, info, trace};
-use nix::{fcntl::OFlag, sys::stat::Mode};
 use std::arch::naked_asm;
-use std::{
-    fs::File,
-    io::Read,
-    os::fd::{AsRawFd, FromRawFd},
-    path::Path,
-};
+use std::path::Path;
 use zygisk_rs::{register_zygisk_module, Api, AppSpecializeArgs, Module, ServerSpecializeArgs};
 
-// Define the target package directly here for simplicity, or keep reading list.txt
+// The target app package name
 const TARGET_PACKAGE: &str = "com.singleCad.dev.mdt.stj";
 
 struct MyModule {
@@ -32,7 +26,7 @@ impl Module for MyModule {
 
     fn pre_app_specialize(&mut self, args: &mut AppSpecializeArgs) {
         let mut inner = || -> anyhow::Result<()> {
-            // 1. Get Process Name
+            // 1. Get the process name
             let package_name = self
                 .env
                 .get_string(unsafe {
@@ -44,19 +38,16 @@ impl Module for MyModule {
                 .to_string_lossy()
                 .to_string();
 
-            // 2. Filter: Only run on our target app
-            // We skip the list.txt complexity to ensure it works 100% for this app
+            // 2. Filter: Only hook the target app
             if package_name != TARGET_PACKAGE {
                 self.api.set_option(zygisk_rs::ModuleOption::DlcloseModuleLibrary);
                 return Ok(());
             }
 
             info!("[-] TARGET DETECTED: {}", package_name);
-            info!("[-] Preparing to hook OpenCommon...");
 
-            // 3. Resolve the Symbol for Android 12/13/14
-            // Note: On Android 14 (Pixel 6), symbol names might vary slightly.
-            // This is the standard ART OpenCommon symbol.
+            // 3. Resolve the symbol for "OpenCommon" (Android 12/13/14)
+            // Note: If this symbol fails, we might need to target "LoadMethod" instead.
             let symbol = "_ZN3art13DexFileLoader10OpenCommonEPKhmS2_mRKNSt3__112basic_stringIcNS3_11char_traitsIcEENS3_9allocatorIcEEEEjPKNS_10OatDexFileEbbPS9_NS3_10unique_ptrINS_16DexFileContainerENS3_14default_deleteISH_EEEEPNS0_12VerifyResultE";
             
             let open_common = dobby_rs::resolve_symbol("libdexfile.so", symbol)
@@ -69,13 +60,12 @@ impl Module for MyModule {
                     dobby_rs::hook(open_common, new_open_common_wrapper as Address)? as usize;
             }
             
-            info!("[-] Hook SUCCESS. Waiting for DEX load...");
-
+            info!("[-] Hook ACTIVE. DEX files will be dumped to /sdcard/Download/MDT_Dump/");
             Ok(())
         };
 
         if let Err(e) = inner() {
-            error!("pre_app_specialize error: {:?}", e);
+            error!("Setup failed: {:?}", e);
         }
     }
 
@@ -88,7 +78,7 @@ register_zygisk_module!(MyModule);
 
 static mut OLD_OPEN_COMMON: usize = 0;
 
-// Trampoline to save registers before calling our hook
+// Assembly trampoline to preserve registers
 #[naked]
 pub extern "C" fn new_open_common_wrapper() {
     unsafe {
@@ -124,40 +114,28 @@ pub extern "C" fn new_open_common_wrapper() {
     }
 }
 
-// The Hook Logic
+// The actual logic: Dump the DEX
 extern "C" fn new_open_common(base: usize, size: usize) {
-    // Filter small noise (usually system configs)
-    if size < 1000 { return; }
-
-    info!("[-] OpenCommon HIT! Base=0x{:x}, Size={}", base, size);
+    if size < 1000 { return; } // Ignore tiny system files
 
     let dex_data = unsafe { std::slice::from_raw_parts(base as *const u8, size) };
     
-    // Validate Header (dex\n035) to ensure it's actually a DEX
+    // Check for "dex\n" header
     if dex_data.len() > 4 && &dex_data[0..4] == b"dex\n" {
         let dir = "/sdcard/Download/MDT_Dump";
-        
-        // Ensure directory exists (might fail if app lacks permissions, 
-        // but your logs show it has WRITE_EXTERNAL_STORAGE)
-        if let Err(_) = std::fs::create_dir_all(dir) {
-            // Fallback to local tmp if sdcard fails
-            let _ = std::fs::create_dir_all("/data/local/tmp/MDT_Dump");
-        }
+        let _ = std::fs::create_dir_all(dir); // Create dir if missing
 
         let crc = crc::Crc::<u32>::new(&crc::CRC_32_CD_ROM_EDC);
         let mut digest = crc.digest();
         digest.update(dex_data);
         let checksum = digest.finalize();
 
-        // Save to /sdcard/Download/MDT_Dump/{checksum}.dex
         let file_path = format!("{}/{:08x}.dex", dir, checksum);
-        let path = Path::new(&file_path);
-
-        if !path.exists() {
+        
+        if !Path::new(&file_path).exists() {
+            info!("[-] DUMPING DEX (Size: {}) to {}", size, file_path);
             if let Err(e) = std::fs::write(&file_path, dex_data) {
-                error!("Failed to write DEX: {:?}", e);
-            } else {
-                info!("MATCH! Dumped decrypted DEX to: {}", file_path);
+                error!("Write failed: {:?}", e);
             }
         }
     }
