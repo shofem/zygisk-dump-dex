@@ -1,5 +1,2 @@
 [build]
 target = "aarch64-linux-android"
-
-[net]
-git-fetch-with-cli = true
