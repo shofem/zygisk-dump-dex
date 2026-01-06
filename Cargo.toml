@@ -1,6 +1,3 @@
-[net]
-git-fetch-with-cli = true
-
 [package]
 name = "mdt_dumper"
 version = "0.2.0"
