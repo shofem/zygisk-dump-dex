@@ -7,11 +7,16 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-zygisk-rs = "0.4.0"  # Verify latest version
-dobby-rs = "0.1"     # Needed for the hooking
+# Zygisk-rs must be pulled from git
+zygisk-rs = { git = "https://github.com/PerformanC/zygisk-rs.git" }
+# Dobby-rs for hooking
+dobby-rs = { git = "https://github.com/xm798/dobby-rs.git" }
+
+# Standard Android logging & utilities
 jni = "0.21"
 log = "0.4"
 android_logger = "0.13"
 anyhow = "1.0"
 nix = { version = "0.26", features = ["fs", "fcntl"] }
 crc = "3.0"
+hex = "0.4"
